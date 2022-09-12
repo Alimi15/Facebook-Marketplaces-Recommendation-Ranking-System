@@ -1,5 +1,6 @@
 from PIL import Image
 import os
+import numpy as np
 
 def clean_image_data(filepath):
     try:
@@ -22,3 +23,13 @@ def resize_image(final_size, im: Image):
     new_im = Image.new("RGB", (final_size, final_size))
     new_im.paste(im, ((final_size-new_image_size[0])//2, (final_size-new_image_size[1])//2))
     return new_im
+
+def create_image_array():
+    dirs = os.listdir('cleaned_images')
+    arr = np.empty((0,786432), int)
+    for item in dirs:
+        im = Image.open(f'cleaned_images/{item}')
+        np_img = np.array(im)
+        row = np.reshape(np_img, (1,1,-1))[0]
+        arr = np.append(arr, row, axis=0)
+    return arr
