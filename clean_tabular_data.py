@@ -12,15 +12,33 @@ def remove_missing_rows(df: pd.DataFrame):
     df.drop(df[df["category"].str.len() == 0].index, inplace=True)
     df.drop(df[df["product_name"] == np.nan].index, inplace=True)
     df.drop(df[df["product_name"].str.len() == 0].index, inplace=True)
+    return df
+
+def convert_price_column(df: pd.DataFrame):
     vals = df["price"].values
     for i, value in enumerate(vals):
         vals[i] = value.replace("£", "").replace(",", "")
     df["price"].replace(df["price"].values, vals, inplace=True)
     df["price"] = df["price"].astype("float64")
+    return df
+
+def convert_category_column(df: pd.DataFrame):
     vals = df["category"].values
     for i, value in enumerate(vals):
         vals[i] = value.split("/")[0].strip()
     df["category"].replace(df["category"].values, vals, inplace=True)
     df["category"] = pd.Categorical(df["category"])
+    return df
+
+def encode(df: pd.DataFrame):
+    encoder = {}
+    for index, category in enumerate(df["category"].cat.categories):
+        encoder[category] = index
     df["category"] = df["category"].cat.codes
+    return df, encoder
+
+def clean(df: pd.DataFrame):
+    df = remove_missing_rows(df)
+    df = convert_price_column(df)
+    df = convert_category_column(df)
     return df

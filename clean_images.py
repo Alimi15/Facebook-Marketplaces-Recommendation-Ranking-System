@@ -1,18 +1,21 @@
 from PIL import Image
 import os
 import numpy as np
+import pandas as pd
 
-def clean_image_data(filepath):
+def clean_image_data(filepath, ids: pd.DataFrame):
+    id_list = ids['id'].to_list()
     try:
         os.mkdir("cleaned_images")
+        dirs = os.listdir(filepath)
+        final_size = 512
+        for item in dirs:
+            if item[:-4] in id_list:
+                im = Image.open(os.path.join(filepath, item))
+                new_im = resize_image(final_size, im)
+                new_im.save(f'cleaned_images/{item}')
     except FileExistsError:
         pass
-    dirs = os.listdir(filepath)
-    final_size = 512
-    for n, item in enumerate(dirs, 1):
-        im = Image.open(os.path.join(filepath, item))
-        new_im = resize_image(final_size, im)
-        new_im.save(f'cleaned_images/{n}_resized.jpg')
 
 
 def resize_image(final_size, im: Image):
@@ -24,7 +27,7 @@ def resize_image(final_size, im: Image):
     new_im.paste(im, ((final_size-new_image_size[0])//2, (final_size-new_image_size[1])//2))
     return new_im
 
-def create_image_array():
+def flatten_image():
     dirs = os.listdir('cleaned_images')
     arr = np.empty((0,786432), int)
     for item in dirs:
