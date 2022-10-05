@@ -1,0 +1,5 @@
+images/
+cleaned_images/
+model_evaluation/
+runs/
+.DS_Store
