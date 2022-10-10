@@ -1,5 +1,6 @@
 images/
 cleaned_images/
-model_evaluation/
+image_model_evaluation/
+text_model_evaluation/
 runs/
 .DS_Store
