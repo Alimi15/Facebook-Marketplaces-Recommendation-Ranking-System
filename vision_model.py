@@ -12,22 +12,6 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from torchvision.transforms import ToTensor
 from datetime import datetime
 
-class TextDataset(torch.utils.data.Dataset):
-    def __init__(self):
-        super().__init__()
-        self.data = pd.read_csv("Products.csv", lineterminator="\n")
-        self.data = clean_tabular_data.clean(self.data)
-        self.data, self.encoder = clean_tabular_data.encode(self.data)
-
-    def __getitem__(self, index):
-        example = self.data.iloc[index]
-        features = example[[2, 4, -1]]
-        label = example[3]
-        return (features, label)
-
-    def __len__(self):
-        return len(self.data)
-
 class ImageDataset(torch.utils.data.Dataset):
     def __init__(self, transform=None):
         super().__init__()
@@ -105,9 +89,9 @@ def train(model: torch.nn.Module, epochs=10):
     writer = SummaryWriter()
     batch_idx = 0
     timestamp = str(datetime.now()).replace(' ', '-').replace(':', '-').replace('.', '-')
-    os.mkdir(f'model_evaluation/{timestamp}')
-    os.mkdir(f'model_evaluation/{timestamp}/weights')
-    for i, epoch in enumerate(range(epochs)):
+    os.mkdir(f'image_model_evaluation/{timestamp}')
+    os.mkdir(f'image_model_evaluation/{timestamp}/weights')
+    for epoch in range(epochs):
         for batch in trainloader:
             features, labels = batch
             prediction = model(features)
@@ -118,7 +102,7 @@ def train(model: torch.nn.Module, epochs=10):
             optimiser.zero_grad()
             writer.add_scalar('loss', loss.item(), batch_idx)
             batch_idx += 1
-        torch.save(model.state_dict(), f'model_evaluation/{timestamp}/weights/epoch{i}.pt')
+        torch.save(model.state_dict(), f'image_model_evaluation/{timestamp}/weights/epoch{epoch}.pt')
 
 def accuracy(model: CNN, test_set):
     test_features = torch.Tensor()
