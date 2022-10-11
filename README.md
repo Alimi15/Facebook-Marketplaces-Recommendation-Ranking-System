@@ -10,8 +10,12 @@ Created simple regression models to predict price from product's name, descripti
 
 ## Milestone 3
 
-Creates vision model using PyTorch to predict item category based on the image. Used PIL to load image and then transformed to torch tensor using torch.transforms
+Created vision model using PyTorch to predict item category based on the image. Used PIL to load image and then transformed to torch tensor using torch.transforms
 
 ## Milestone 4
 
-Creates text model using PyTorch to predict item category based on the image. Used BERT to create text embeddings.
+Created text model using PyTorch to predict item category based on the image. Used BERT to create text embeddings.
+
+## Milestone 5
+
+Combined the text and image models by concatenating outputs and adding a linear layer to the end.
