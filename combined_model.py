@@ -1,19 +1,19 @@
 import torch
-import torch.nn.functional as F
-import pandas as pd
-import numpy as np
 import clean_tabular_data
 import clean_images
 import os
-from PIL import Image
-from torch.utils.data import DataLoader
+import numpy as np
+import pandas as pd
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
+from transformers import BertTokenizer, BertConfig, BertModel
+from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
-from torchvision.transforms import ToTensor
+from PIL import Image
 from datetime import datetime
 
-class ImageDataset(torch.utils.data.Dataset):
-    def __init__(self, transform=None):
+class CombinedDataset(torch.utils.data.Dataset):
+    def __init__(self, transform=None, max_length: int = 50):
         super().__init__()
         self.transform = transform
         self.data = pd.read_csv("Products.csv", lineterminator="\n")
@@ -23,6 +23,11 @@ class ImageDataset(torch.utils.data.Dataset):
         self.data["category"] = self.data["category"].cat.codes
         self.encoder = {name: index for index, name in enumerate(self.class_labels)}
         self.decoder = {index: name for index, name in enumerate(self.class_labels)}
+        config = BertConfig()
+        config.output_hidden_states = True
+        self.model = BertModel(config)
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+        self.max_length = max_length
         self.keys = pd.read_csv("Images.csv", lineterminator="\n")
         clean_images.clean_image_data("images/", self.keys)
         self.image_paths = os.listdir('cleaned_images')
@@ -33,38 +38,42 @@ class ImageDataset(torch.utils.data.Dataset):
         image = Image.open(f'cleaned_images/{image_path}')
         image_id = image_path[:-4]
         product_id = self.keys[self.keys['id']==image_id].reset_index().loc[0].at['product_id']
-        class_index = self.data[self.data['id']==product_id].reset_index().loc[0].at['category']
+        sentence = self.data[self.data['id']==product_id].reset_index().loc[0].at['product_description']
         if self.transform:
             image = self.transform(image)
-        return image, class_index
+        example = self.data.iloc[index]
+        label = torch.as_tensor(self.encoder[example[5]])
+        encoded = self.tokenizer.batch_encode_plus([sentence], max_length=self.max_length, padding='max_length', truncation=True)
+        encoded = {key:torch.LongTensor(value) for key, value in encoded.items()}
+        with torch.no_grad():
+            description = self.model(**encoded).last_hidden_state.swapaxes(1,2)
+        description = description.squeeze(0)
+        return (image, description), label
 
     def __len__(self):
         return len(self.keys)
 
-class ResNetNN(torch.nn.Module):
-
+class CombinedClassifier(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.layers = torch.hub.load('NVIDIA/DeepLearningExamples:torchhub', 'nvidia_resnet50', pretrained=True)
-        self.layers.fc = torch.nn.Linear(2048, 13)
-    
-    def forward(self, features):
-        return F.softmax(self.layers(features), dim=0)
-
-    def predict_probs(self, features):
-        with torch.no_grad():
-            return self.forward(features)
-
-    def predict(self, features):
-        probs = self.predict_probs(features)
-        idx = np.argmax(probs)
-        return idx
-
-class ImageClassifier(torch.nn.Module):
-
-    def __init__(self):
-        super().__init__()
-        self.layers = torch.nn.Sequential(
+        self.text_layers = torch.nn.Sequential(
+            torch.nn.Conv1d(768, 256, kernel_size=2, stride=1, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.MaxPool1d(kernel_size=2, stride=2),
+            torch.nn.Conv1d(256, 128, kernel_size=2, stride=1, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.MaxPool1d(kernel_size=2, stride=2),
+            torch.nn.Conv1d(128, 64, kernel_size=2, stride=1, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.MaxPool1d(kernel_size=2, stride=2),
+            torch.nn.Conv1d(64, 32, kernel_size=2, stride=1, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.Flatten(),
+            torch.nn.Linear(384, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 13)
+        )
+        self.image_layers = torch.nn.Sequential(
                 torch.nn.Conv2d(3, 7, 4),
                 torch.nn.ReLU(),
                 torch.nn.Conv2d(7, 11, 4),
@@ -73,9 +82,15 @@ class ImageClassifier(torch.nn.Module):
                 torch.nn.Linear(2816396, 13),
                 torch.nn.Softmax(dim=0)
         )
+        self.linear = torch.nn.Linear(26, 13)
     
     def forward(self, features):
-        return self.layers(features)
+        image_embedding, text_embedding = features
+        image_out = self.image_layers(image_embedding)
+        text_out = self.text_layers(text_embedding)
+        combined_out = torch.cat((image_out, text_out))
+        out = self.linear(combined_out)
+        return out
 
     def predict_probs(self, features):
         with torch.no_grad():
@@ -85,15 +100,17 @@ class ImageClassifier(torch.nn.Module):
         probs = self.predict_probs(features)
         idx = np.argmax(probs)
         return idx
-    
+
 def train(model: torch.nn.Module, epochs=10):
     optimiser = torch.optim.SGD(model.parameters(), lr=0.001)
     writer = SummaryWriter()
     batch_idx = 0
     timestamp = str(datetime.now()).replace(' ', '-').replace(':', '-').replace('.', '-')
-    os.mkdir(f'image_model_evaluation/{timestamp}')
-    os.mkdir(f'image_model_evaluation/{timestamp}/weights')
+    os.mkdir(f'model_evaluation/{timestamp}')
+    os.mkdir(f'model_evaluation/{timestamp}/weights')
     for epoch in range(epochs):
+        hist_acc = []
+        acc = 0
         for batch in trainloader:
             features, labels = batch
             prediction = model(features)
@@ -102,11 +119,13 @@ def train(model: torch.nn.Module, epochs=10):
             print(loss.item())
             optimiser.step()
             optimiser.zero_grad()
+            acc = torch.sum(torch.argmax(prediction, dim=1) == labels).item()/len(labels)
+            hist_acc.append(acc)
             writer.add_scalar('loss', loss.item(), batch_idx)
             batch_idx += 1
-        torch.save(model.state_dict(), f'image_model_evaluation/{timestamp}/weights/epoch{epoch}.pt')
+        torch.save(model.state_dict(), f'model_evaluation/{timestamp}/weights/epoch{epoch}.pt')
 
-def accuracy(model: ImageClassifier):
+def accuracy(model: CombinedClassifier):
     test_features = torch.Tensor()
     test_labels = torch.Tensor()
     for batch in testloader:
@@ -118,13 +137,13 @@ def accuracy(model: ImageClassifier):
     acc = np.array(y_pred==y_true).sum() / len(y_true)
     return acc
 
-if __name__ == '__main__':
-    image_dataset = ImageDataset(transform=ToTensor())
+if __name__ == "__main__":
+    dataset = CombinedDataset()
     batch_size = 8
     test_split = .2
     shuffle_dataset = True
     random_seed= 42
-    dataset_size = len(image_dataset)
+    dataset_size = len(dataset)
     indices = list(range(dataset_size))
     split = int(np.floor(test_split * dataset_size))
     if shuffle_dataset :
@@ -133,10 +152,10 @@ if __name__ == '__main__':
     train_indices, test_indices = indices[split:], indices[:split]
     train_sampler = SubsetRandomSampler(train_indices)
     test_sampler = SubsetRandomSampler(test_indices)
-    trainloader = DataLoader(image_dataset, batch_size=batch_size, sampler=train_sampler)
-    testloader = DataLoader(image_dataset, batch_size=batch_size, sampler=test_sampler)
-    model = ImageClassifier()
+    trainloader = DataLoader(dataset, batch_size=batch_size, sampler=train_sampler)
+    testloader = DataLoader(dataset, batch_size=batch_size, sampler=test_sampler)
+    model = CombinedClassifier()
     train(model)
     acc = accuracy(model)
     if acc >= 0.6:
-        torch.save(model.state_dict(), f'final_models/image_model.pt')
+        torch.save(model.state_dict(), f'final_models/combined_model.pt')

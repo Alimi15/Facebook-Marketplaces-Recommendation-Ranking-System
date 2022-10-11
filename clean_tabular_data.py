@@ -30,13 +30,6 @@ def convert_category_column(df: pd.DataFrame):
     df["category"] = pd.Categorical(df["category"])
     return df
 
-def encode(df: pd.DataFrame):
-    encoder = {}
-    for index, category in enumerate(df["category"].cat.categories):
-        encoder[category] = index
-    df["category"] = df["category"].cat.codes
-    return df, encoder
-
 def clean(df: pd.DataFrame):
     df = remove_missing_rows(df)
     df = convert_price_column(df)
