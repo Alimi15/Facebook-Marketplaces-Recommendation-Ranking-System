@@ -17,6 +17,7 @@ class TextDataset(torch.utils.data.Dataset):
         self.data = clean_tabular_data.clean(self.data)
         self.data["category"] = pd.Categorical(self.data["category"])
         self.class_labels = self.data['category'].cat.categories
+        self.data["category"] = self.data["category"].cat.codes
         self.encoder = {name: index for index, name in enumerate(self.class_labels)}
         self.decoder = {index: name for index, name in enumerate(self.class_labels)}
         config = BertConfig()
@@ -40,7 +41,7 @@ class TextDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.data)
 
-class Classifier(torch.nn.Module):
+class TextClassifier(torch.nn.Module):
     def __init__(self, input_size: int = 768):
         super().__init__()
         self.main = torch.nn.Sequential(
@@ -63,6 +64,15 @@ class Classifier(torch.nn.Module):
     
     def forward(self, features):
         return self.main(features)
+
+    def predict_probs(self, features):
+        with torch.no_grad():
+            return self.forward(features)
+
+    def predict(self, features):
+        probs = self.predict_probs(features)
+        idx = np.argmax(probs)
+        return idx
 
 def train(model: torch.nn.Module, epochs=10):
     optimiser = torch.optim.SGD(model.parameters(), lr=0.001)
@@ -89,6 +99,18 @@ def train(model: torch.nn.Module, epochs=10):
             if acc > 0.6:
                 torch.save(model.state_dict(), f'text_model_evaluation/{timestamp}/weights/epoch{epoch}.pt')
 
+def accuracy(model: TextClassifier):
+    test_features = torch.Tensor()
+    test_labels = torch.Tensor()
+    for batch in testloader:
+        features, labels = batch
+        test_features = torch.cat((test_features, features))
+        test_labels = torch.cat((test_labels, labels))
+    y_pred = model.predict(test_features)
+    y_true = test_labels
+    acc = np.array(y_pred==y_true).sum() / len(y_true)
+    return acc
+
 if __name__ == "__main__":
     text_dataset = TextDataset()
     batch_size = 8
@@ -106,5 +128,8 @@ if __name__ == "__main__":
     test_sampler = SubsetRandomSampler(test_indices)
     trainloader = DataLoader(text_dataset, batch_size=batch_size, sampler=train_sampler)
     testloader = DataLoader(text_dataset, batch_size=batch_size, sampler=test_sampler)
-    model = Classifier()
+    model = TextClassifier()
     train(model)
+    acc = accuracy(model)
+    if acc >= 0.6:
+        torch.save(model.state_dict(), f'final_models/text_model.pt')
